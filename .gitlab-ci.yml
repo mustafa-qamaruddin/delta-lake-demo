@@ -1,0 +1,41 @@
+stages:
+  - build
+  - package
+  - deploy
+
+variables:
+  DOCKER_REGISTRY: my-docker-registry
+  DOCKER_IMAGE_NAME: my-app
+  DOCKER_IMAGE_TAG: latest
+  K8S_NAMESPACE: my-namespace
+  K8S_APP_NAME: my-app
+  KUBECONFIG: /root/.kube/config
+
+build:
+  stage: build
+  image: adoptopenjdk:11-jdk-hotspot
+  script:
+    - sbt compile
+
+package:
+  stage: package
+  image: docker:stable
+  services:
+    - docker:dind
+  script:
+    - sbt assembly
+    - docker build -t $DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$DOCKER_IMAGE_TAG .
+
+deploy:
+  stage: deploy
+  image:
+    name: argoproj/argocd-cli:v2.1.2
+    entrypoint: [""]
+  script:
+    - mkdir -p ~/.ssh
+    - echo "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_rsa
+    - chmod 600 ~/.ssh/id_rsa
+    - kubectl config use-context k3s-my-cluster
+    - argocd login --insecure --username admin --ssh-private-key ~/.ssh/id_rsa --grpc-web
+    - argocd app create $K8S_APP_NAME --repo https://gitlab.com/<username>/<repository>.git --path kubernetes --dest-namespace $K8S_NAMESPACE --dest-server https://kubernetes.default.svc --sync-policy automated --auto-prune
+    - argocd app sync $K8S_APP_NAME
